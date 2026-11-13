@@ -21,6 +21,7 @@ public:
 
     bool healthy() const;
     nlohmann::json models() const;
+    bool busy(const nlohmann::json& models) const;
     std::optional<std::string> load(const std::string& model) const;
     std::optional<std::string> unload(const std::string& model) const;
 

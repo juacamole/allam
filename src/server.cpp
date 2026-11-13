@@ -180,4 +180,23 @@ std::optional<std::string> Server::unload(const std::string& model) const {
     return post_model("/models/unload", model);
 }
 
+
+bool Server::busy(const json& models) const {
+    for (auto& m : models) {
+        auto state = m["status"].value("value", "");
+        if (state == "loading") return true;
+        if (state != "loaded") continue;
+
+        httplib::Params params{{"model", m.value("id", "")}, {"autoload", "false"}};
+        auto res = http(cfg_).Get("/slots", params, httplib::Headers{});
+        if (!res || res->status != 200) return true;
+        auto slots = json::parse(res->body, nullptr, false);
+        if (!slots.is_array()) return true;
+        for (auto& slot : slots) {
+            if (slot.value("is_processing", false)) return true;
+        }
+    }
+    return false;
+}
+
 }

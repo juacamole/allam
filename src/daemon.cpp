@@ -1,5 +1,6 @@
 #include "daemon.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -71,6 +72,16 @@ std::optional<Active> active(const json& models) {
         if (s == "loaded" || s == "loading" || s == "sleeping") return Active{m.value("id", ""), s};
     }
     return std::nullopt;
+}
+
+int to_size(const std::string& s) {
+    try {
+        size_t n = 0;
+        int v = std::stoi(s, &n);
+        if (n == s.size() && v >= 0 && v <= 65536) return v;
+    } catch (const std::exception&) {
+    }
+    return -1;
 }
 
 json error(const std::string& msg) {
@@ -149,8 +160,28 @@ json Daemon::handle(const std::string& line) {
 
         auto err = cmd == "load" ? server_.load(*model) : server_.unload(*model);
         if (err) return error(*err);
+        {
+            std::lock_guard lock(mu_);
+            poke_ = true;
+        }
         wake_.notify_all();
         return {{"ok", true}};
+    }
+    if (cmd == "batch") {
+        if (words.size() < 2 || words.size() > 3) return error("usage: batch <ubatch> [batch]");
+        int ub = to_size(words[1]);
+        int b = words.size() > 2 ? to_size(words[2]) : 0;
+        if (ub < 1 || b < 0) return error("batch sizes must be 1-65536");
+        {
+            std::lock_guard lock(mu_);
+            if (b == 0) b = std::max(ub, batch_);
+            if (ub > b) return error("ubatch must not exceed batch");
+            if (ub == ubatch_ && b == batch_) pending_.reset();
+            else pending_ = {ub, b};
+            poke_ = true;
+        }
+        wake_.notify_all();
+        return status();
     }
     if (cmd == "stop") {
         quit = true;
@@ -168,17 +199,53 @@ json Daemon::status() {
         {"model_state", model_state_},
         {"ubatch", ubatch_},
         {"batch", batch_},
+        {"busy", busy_},
+        {"pending", pending_ ? json{{"ubatch", pending_->first}, {"batch", pending_->second}} : json(nullptr)},
     };
 }
 
 void Daemon::refresh() {
     bool healthy = server_.healthy();
-    auto found = healthy ? active(server_.models()) : std::nullopt;
+    auto models = healthy ? server_.models() : json::array();
+    auto found = active(models);
+    bool busy = healthy && server_.busy(models);
 
     std::lock_guard lock(mu_);
     if (healthy && phase_ == "starting") phase_ = "running";
     model_ = found ? std::optional(found->id) : std::nullopt;
     model_state_ = found ? found->state : "unloaded";
+    busy_ = busy;
+}
+
+void Daemon::start_server() {
+    try {
+        started_ = std::chrono::steady_clock::now();
+        server_.start();
+    } catch (const std::exception& e) {
+        std::cerr << "allam: " << e.what() << "\n";
+    }
+}
+
+void Daemon::restart(std::pair<int, int> sizes, std::optional<std::string> model) {
+    while (!server_.stop()) std::cerr << "allam: llama-server still busy, waiting\n";
+    server_.set_batch(sizes.first, sizes.second);
+    start_server();
+    {
+        std::lock_guard lock(mu_);
+        ubatch_ = sizes.first;
+        batch_ = sizes.second;
+        if (pending_ == sizes) pending_.reset();
+        phase_ = "starting";
+    }
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (!quit && server_.alive() && !server_.healthy() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    if (model && !quit) {
+        if (auto err = server_.load(*model)) std::cerr << "allam: reload " << *model << ": " << *err << "\n";
+    }
+    refresh();
 }
 
 void Daemon::work() {
@@ -189,18 +256,26 @@ void Daemon::work() {
                 if (phase_ == "running") std::cerr << "allam: llama-server exited, restarting\n";
                 phase_ = "starting";
             }
-            try {
-                started_ = std::chrono::steady_clock::now();
-                server_.start();
-            } catch (const std::exception& e) {
-                std::cerr << "allam: " << e.what() << "\n";
-            }
+            start_server();
         }
 
         refresh();
 
+        std::optional<std::pair<int, int>> sizes;
+        std::optional<std::string> model;
+        {
+            std::lock_guard lock(mu_);
+            if (pending_ && phase_ == "running" && !busy_) {
+                sizes = pending_;
+                if (model_state_ == "loaded" || model_state_ == "loading") model = model_;
+                phase_ = "restarting";
+            }
+        }
+        if (sizes) restart(*sizes, model);
+
         std::unique_lock lock(mu_);
-        wake_.wait_for(lock, std::chrono::seconds(1), [] { return quit.load(); });
+        wake_.wait_for(lock, std::chrono::seconds(1), [this] { return quit || poke_; });
+        poke_ = false;
     }
 
     {

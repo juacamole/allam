@@ -10,6 +10,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace allam {
 
@@ -21,6 +22,8 @@ public:
 private:
     void work();
     void refresh();
+    void start_server();
+    void restart(std::pair<int, int> sizes, std::optional<std::string> model);
     void serve(int fd);
     nlohmann::json handle(const std::string& line);
     nlohmann::json status();
@@ -36,6 +39,9 @@ private:
     std::string model_state_ = "unloaded";
     int ubatch_;
     int batch_;
+    bool busy_ = false;
+    bool poke_ = false;
+    std::optional<std::pair<int, int>> pending_;
     std::chrono::steady_clock::time_point started_ {};
 };
 

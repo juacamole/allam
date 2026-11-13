@@ -16,6 +16,7 @@ constexpr const char* usage =
     "       allam models\n"
     "       allam load <model>\n"
     "       allam unload [model]\n"
+    "       allam batch <ubatch> [batch]\n"
     "       allam stop\n";
 
 int daemon_main(int argc, char** argv) {
