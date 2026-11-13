@@ -15,7 +15,7 @@ Tech stack: C++20, cpp-httplib, nlohmann/json, CMake, Nix.
 ```sh
 nix build                     # or: direnv allow && cmake -B build && cmake --build build
 cp allam.conf.example ~/.config/allam/allam.conf
-allam daemon &
+allam start                   # background, log: ~/.local/state/allam/allam.log
 allam status                  # {"ok":true,"phase":"running","ubatch":512,...}
 allam models
 allam load <model>
