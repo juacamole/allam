@@ -49,6 +49,10 @@ std::string default_config_path() {
                   env_or("XDG_CONFIG_HOME", env_or("HOME", ".") + "/.config") + "/allam/allam.conf");
 }
 
+std::string default_log_path() {
+    return env_or("XDG_STATE_HOME", env_or("HOME", ".") + "/.local/state") + "/allam/allam.log";
+}
+
 std::string default_socket_path() {
     return env_or("ALLAM_SOCKET", env_or("XDG_RUNTIME_DIR", "/tmp") + "/allam.sock");
 }
