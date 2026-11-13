@@ -91,7 +91,7 @@ json error(const std::string& msg) {
 }
 
 Daemon::Daemon(Config cfg, std::string socket)
-    : cfg_(cfg), socket_(std::move(socket)), server_(cfg), ubatch_(cfg.ubatch), batch_(cfg.batch) {}
+    : socket_(std::move(socket)), server_(cfg), ubatch_(cfg.ubatch), batch_(cfg.batch) {}
 
 int Daemon::run() {
     install_signals();

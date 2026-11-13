@@ -28,7 +28,6 @@ private:
     nlohmann::json handle(const std::string& line);
     nlohmann::json status();
 
-    Config cfg_;
     std::string socket_;
     Server server_;
 
