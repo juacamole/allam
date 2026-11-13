@@ -22,7 +22,7 @@ constexpr const char* usage =
     "usage: allam start [-c config]\n"
     "       allam daemon [-c config]\n"
     "       allam status\n"
-    "       allam models\n"
+    "       allam ls | list | models\n"
     "       allam load <model>\n"
     "       allam unload [model]\n"
     "       allam batch <ubatch> [batch]\n"

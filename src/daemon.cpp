@@ -140,7 +140,7 @@ json Daemon::handle(const std::string& line) {
 
     const auto& cmd = words[0];
     if (cmd == "status") return status();
-    if (cmd == "models") {
+    if (cmd == "models" || cmd == "ls" || cmd == "list") {
         json list = json::array();
         for (auto& m : server_.models()) {
             list.push_back({{"id", m.value("id", "")}, {"status", m["status"].value("value", "")}});
