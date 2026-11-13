@@ -33,6 +33,7 @@ private:
     std::condition_variable wake_;
     std::string phase_ = "starting";
     std::optional<std::string> model_;
+    std::string model_state_ = "unloaded";
     int ubatch_;
     int batch_;
     std::chrono::steady_clock::time_point started_ {};

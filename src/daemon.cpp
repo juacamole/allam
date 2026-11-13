@@ -60,10 +60,15 @@ int listen_on(const std::string& path) {
     return fd;
 }
 
-std::optional<std::string> active(const json& models) {
+struct Active {
+    std::string id;
+    std::string state;
+};
+
+std::optional<Active> active(const json& models) {
     for (auto& m : models) {
         auto s = m["status"].value("value", "");
-        if (s == "loaded" || s == "loading") return m.value("id", "");
+        if (s == "loaded" || s == "loading" || s == "sleeping") return Active{m.value("id", ""), s};
     }
     return std::nullopt;
 }
@@ -124,6 +129,29 @@ json Daemon::handle(const std::string& line) {
 
     const auto& cmd = words[0];
     if (cmd == "status") return status();
+    if (cmd == "models") {
+        json list = json::array();
+        for (auto& m : server_.models()) {
+            list.push_back({{"id", m.value("id", "")}, {"status", m["status"].value("value", "")}});
+        }
+        return {{"ok", true}, {"models", list}};
+    }
+    if (cmd == "load" || cmd == "unload") {
+        std::optional<std::string> model;
+        {
+            std::lock_guard lock(mu_);
+            if (phase_ != "running") return error("server is " + phase_);
+            model = model_;
+        }
+        if (words.size() > 1) model = words[1];
+        else if (cmd == "load") return error("usage: load <model>");
+        if (!model) return error("no model loaded");
+
+        auto err = cmd == "load" ? server_.load(*model) : server_.unload(*model);
+        if (err) return error(*err);
+        wake_.notify_all();
+        return {{"ok", true}};
+    }
     if (cmd == "stop") {
         quit = true;
         return {{"ok", true}};
@@ -137,6 +165,7 @@ json Daemon::status() {
         {"ok", true},
         {"phase", phase_},
         {"model", model_ ? json(*model_) : json(nullptr)},
+        {"model_state", model_state_},
         {"ubatch", ubatch_},
         {"batch", batch_},
     };
@@ -144,11 +173,12 @@ json Daemon::status() {
 
 void Daemon::refresh() {
     bool healthy = server_.healthy();
-    auto model = healthy ? active(server_.models()) : std::nullopt;
+    auto found = healthy ? active(server_.models()) : std::nullopt;
 
     std::lock_guard lock(mu_);
     if (healthy && phase_ == "starting") phase_ = "running";
-    model_ = model;
+    model_ = found ? std::optional(found->id) : std::nullopt;
+    model_state_ = found ? found->state : "unloaded";
 }
 
 void Daemon::work() {

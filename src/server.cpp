@@ -162,4 +162,22 @@ json Server::models() const {
     return body["data"];
 }
 
+
+std::optional<std::string> Server::post_model(const std::string& path, const std::string& model) const {
+    auto res = http(cfg_).Post(path, json{{"model", model}}.dump(), "application/json");
+    if (!res) return "llama-server unreachable";
+    if (res->status == 200) return std::nullopt;
+    auto body = json::parse(res->body, nullptr, false);
+    if (body.is_object() && body.contains("error")) return body["error"].value("message", res->body);
+    return res->body;
+}
+
+std::optional<std::string> Server::load(const std::string& model) const {
+    return post_model("/models/load", model);
+}
+
+std::optional<std::string> Server::unload(const std::string& model) const {
+    return post_model("/models/unload", model);
+}
+
 }

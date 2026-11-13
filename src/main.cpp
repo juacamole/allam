@@ -13,6 +13,9 @@ namespace {
 constexpr const char* usage =
     "usage: allam daemon [-c config]\n"
     "       allam status\n"
+    "       allam models\n"
+    "       allam load <model>\n"
+    "       allam unload [model]\n"
     "       allam stop\n";
 
 int daemon_main(int argc, char** argv) {
