@@ -84,6 +84,43 @@ int to_size(const std::string& s) {
     return -1;
 }
 
+std::optional<std::string> pick(const std::vector<std::string>& ids, const std::string& query,
+                                bool (*match)(const std::string&, const std::string&), std::string& err) {
+    std::vector<std::string> hits;
+    for (auto& id : ids) {
+        if (match(id, query)) hits.push_back(id);
+    }
+    if (hits.size() == 1) return hits[0];
+    if (hits.size() > 1) {
+        err = "ambiguous model " + query + ":";
+        for (auto& h : hits) err += " " + h;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> resolve(const json& models, const std::string& query, std::string& err) {
+    std::vector<std::string> ids;
+    for (auto& m : models) ids.push_back(m.value("id", ""));
+
+    for (auto& id : ids) {
+        if (id == query) return id;
+    }
+    if (query.find_first_not_of("0123456789") == std::string::npos) {
+        int i = to_size(query);
+        if (i >= 1 && i <= static_cast<int>(ids.size())) return ids[i - 1];
+        err = "no model #" + query;
+        return std::nullopt;
+    }
+
+    auto prefix = [](const std::string& id, const std::string& q) { return id.rfind(q, 0) == 0; };
+    auto inside = [](const std::string& id, const std::string& q) { return id.find(q) != std::string::npos; };
+    if (auto id = pick(ids, query, prefix, err)) return id;
+    if (!err.empty()) return std::nullopt;
+    if (auto id = pick(ids, query, inside, err)) return id;
+    if (err.empty()) err = "no model matches " + query;
+    return std::nullopt;
+}
+
 json error(const std::string& msg) {
     return {{"ok", false}, {"error", msg}};
 }
@@ -154,7 +191,11 @@ json Daemon::handle(const std::string& line) {
             if (phase_ != "running") return error("server is " + phase_);
             model = model_;
         }
-        if (words.size() > 1) model = words[1];
+        if (words.size() > 1) {
+            std::string err;
+            model = resolve(server_.models(), words[1], err);
+            if (!model) return error(err);
+        }
         else if (cmd == "load") return error("usage: load <model>");
         if (!model) return error("no model loaded");
 
