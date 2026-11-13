@@ -1,0 +1,11 @@
+server = llama-server
+preset = ~/models/models.ini
+host = 127.0.0.1
+port = 8080
+ubatch = 512
+batch = 512
+nice = 19
+stop_timeout = 120
+env = GGML_VK_QUEUE_PRIORITY=low
+arg = -ngl 999 -fa on -np 1 --models-max 1
+arg = --jinja
