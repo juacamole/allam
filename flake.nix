@@ -12,7 +12,7 @@
       packages = forAll (pkgs: {
         default = pkgs.stdenv.mkDerivation {
           pname = "allam";
-          version = "0.1.0";
+          version = "0.3.0";
           src = self;
           nativeBuildInputs = [ pkgs.cmake ];
           buildInputs = [ pkgs.httplib pkgs.nlohmann_json ];
