@@ -17,8 +17,8 @@ nix build                     # or: direnv allow && cmake -B build && cmake --bu
 cp allam.conf.example ~/.config/allam/allam.conf
 allam start                   # background, log: ~/.local/state/allam/allam.log
 allam status                  # {"ok":true,"phase":"running","ubatch":512,...}
-allam models
-allam load <model>
+allam ls                      # numbered list, also: list, models
+allam load <model>            # full name, unique part of it, or index
 allam unload [model]
 allam batch <ubatch> [batch]
 allam stop
