@@ -23,5 +23,6 @@ struct Config {
 Config load_config(const std::string& path);
 std::string default_config_path();
 std::string default_socket_path();
+std::string default_log_path();
 
 }
