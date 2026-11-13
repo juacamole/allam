@@ -12,6 +12,8 @@ add_executable(allam
     src/main.cpp
     src/config.cpp
     src/server.cpp
+    src/daemon.cpp
+    src/client.cpp
 )
 target_compile_options(allam PRIVATE -Wall -Wextra -Wpedantic)
 target_include_directories(allam PRIVATE ${HTTPLIB_INCLUDE_DIR})
