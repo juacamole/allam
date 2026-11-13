@@ -21,7 +21,7 @@
 
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
-          inputsFrom = [ self.packages.${pkgs.system}.default ];
+          inputsFrom = [ self.packages.${pkgs.stdenv.hostPlatform.system}.default ];
           packages = [ pkgs.clang-tools pkgs.gdb ];
         };
       });
