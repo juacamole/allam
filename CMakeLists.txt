@@ -13,6 +13,7 @@ add_executable(allam
     src/config.cpp
     src/server.cpp
     src/daemon.cpp
+    src/memory.cpp
     src/client.cpp
 )
 target_compile_options(allam PRIVATE -Wall -Wextra -Wpedantic)

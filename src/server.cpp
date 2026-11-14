@@ -41,6 +41,45 @@ std::vector<pid_t> children(pid_t pid) {
     return out;
 }
 
+void write_all(int fd, const char* data, size_t size) {
+    while (size > 0) {
+        ssize_t n = write(fd, data, size);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return;
+        data += n;
+        size -= static_cast<size_t>(n);
+    }
+}
+
+void pump(int in, int out, std::shared_ptr<LoadLog> log) {
+    std::string partial;
+    char buf[8192];
+    for (;;) {
+        ssize_t n = read(in, buf, sizeof(buf));
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        write_all(out, buf, static_cast<size_t>(n));
+        partial.append(buf, static_cast<size_t>(n));
+        for (size_t nl; (nl = partial.find('\n')) != std::string::npos;) {
+            log->feed(partial.substr(0, nl));
+            partial.erase(0, nl + 1);
+        }
+        if (partial.size() > 65536) partial.clear();
+    }
+    close(in);
+    close(out);
+}
+
+double metric(const std::string& body, const std::string& name) {
+    auto at = body.find("\nllamacpp:" + name + " ");
+    if (at == std::string::npos) return 0;
+    try {
+        return std::stod(body.substr(at + name.size() + 11));
+    } catch (const std::exception&) {
+        return 0;
+    }
+}
+
 std::vector<char*> c_strings(std::vector<std::string>& v) {
     std::vector<char*> out;
     for (auto& s : v) out.push_back(s.data());
@@ -84,31 +123,37 @@ void Server::start() {
     auto argv = c_strings(cmd);
     auto envp = c_strings(env);
 
-    int logfd = -1;
-    if (!cfg_.log.empty()) {
-        logfd = open(cfg_.log.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
-        if (logfd < 0) throw std::runtime_error("cannot open " + cfg_.log);
+    int logfd = cfg_.log.empty()
+        ? fcntl(STDOUT_FILENO, F_DUPFD_CLOEXEC, 0)
+        : open(cfg_.log.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    if (logfd < 0) throw std::runtime_error("cannot open log " + cfg_.log);
+
+    int out[2];
+    if (pipe2(out, O_CLOEXEC) != 0) {
+        close(logfd);
+        throw std::runtime_error("pipe failed");
     }
 
     pid_t pid = fork();
     if (pid < 0) {
-        if (logfd >= 0) close(logfd);
+        close(logfd);
+        close(out[0]);
+        close(out[1]);
         throw std::runtime_error("fork failed");
     }
     if (pid == 0) {
         setsid();
         prctl(PR_SET_PDEATHSIG, SIGTERM);
-        if (logfd >= 0) {
-            dup2(logfd, STDOUT_FILENO);
-            dup2(logfd, STDERR_FILENO);
-        }
+        dup2(out[1], STDOUT_FILENO);
+        dup2(out[1], STDERR_FILENO);
         setpriority(PRIO_PROCESS, 0, cfg_.nice);
         execvpe(argv[0], argv.data(), envp.data());
         _exit(127);
     }
 
-    if (logfd >= 0) close(logfd);
+    close(out[1]);
     pid_ = pid;
+    std::thread(pump, out[0], logfd, load_log_).detach();
 }
 
 bool Server::alive() {
@@ -187,16 +232,52 @@ bool Server::busy(const json& models) const {
         if (state == "loading") return true;
         if (state != "loaded") continue;
 
-        httplib::Params params{{"model", m.value("id", "")}, {"autoload", "false"}};
-        auto res = http(cfg_).Get("/slots", params, httplib::Headers{});
-        if (!res || res->status != 200) return true;
-        auto slots = json::parse(res->body, nullptr, false);
-        if (!slots.is_array()) return true;
-        for (auto& slot : slots) {
-            if (slot.value("is_processing", false)) return true;
+        auto id = m.value("id", "");
+        if (auto busy = busy_metrics(id)) {
+            if (*busy) return true;
+            continue;
+        }
+        auto list = slots(id);
+        if (list.empty()) return true;
+        for (auto& slot : list) {
+            if (slot.value("processing", false)) return true;
         }
     }
     return false;
+}
+
+std::optional<bool> Server::busy_metrics(const std::string& model) const {
+    httplib::Params params{{"model", model}, {"autoload", "false"}};
+    auto res = http(cfg_).Get("/metrics", params, httplib::Headers{});
+    if (!res || res->status != 200) return std::nullopt;
+    return metric(res->body, "requests_processing") > 0 || metric(res->body, "requests_deferred") > 0;
+}
+
+json Server::slots(const std::string& model) const {
+    httplib::Params params{{"model", model}, {"autoload", "false"}};
+    auto res = http(cfg_).Get("/slots", params, httplib::Headers{});
+    if (!res || res->status != 200) return json::array();
+    auto body = json::parse(res->body, nullptr, false);
+    if (!body.is_array()) return json::array();
+
+    json out = json::array();
+    for (auto& s : body) {
+        long tokens = s.value("n_prompt_tokens", 0L);
+        if (s.contains("next_token") && s["next_token"].is_array() && !s["next_token"].empty()) {
+            tokens += s["next_token"][0].value("n_decoded", 0L);
+        }
+        out.push_back({
+            {"id", s.value("id", 0)},
+            {"processing", s.value("is_processing", false)},
+            {"tokens", tokens},
+            {"n_ctx", s.value("n_ctx", 0)},
+        });
+    }
+    return out;
+}
+
+Footprint Server::footprint() const {
+    return load_log_->footprint();
 }
 
 }
