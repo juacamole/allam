@@ -3,7 +3,6 @@
 #include <cmath>
 #include <fstream>
 #include <optional>
-#include <sstream>
 #include <utility>
 
 namespace allam {

@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -27,6 +28,8 @@ private:
     void serve(int fd);
     nlohmann::json handle(const std::string& line);
     nlohmann::json status();
+    nlohmann::json memory(bool all);
+    std::optional<std::string> check_fit(int ubatch);
 
     std::string socket_;
     Server server_;
@@ -42,6 +45,14 @@ private:
     bool poke_ = false;
     std::optional<std::pair<int, int>> pending_;
     std::chrono::steady_clock::time_point started_ {};
+
+    struct Measured {
+        Footprint footprint;
+        int ubatch;
+        int batch;
+    };
+    std::map<std::string, Measured> measured_;
+    uint64_t generation_ = 0;
 };
 
 }

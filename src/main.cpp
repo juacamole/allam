@@ -26,7 +26,8 @@ constexpr const char* usage =
     "       allam ls | list | models\n"
     "       allam load <model>\n"
     "       allam unload [model]\n"
-    "       allam batch <ubatch> [batch]\n"
+    "       allam mem\n"
+    "       allam batch <ubatch> [batch] [force]\n"
     "       allam stop\n";
 
 std::string config_arg(int argc, char** argv) {

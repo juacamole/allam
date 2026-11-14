@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cmath>
 #include <chrono>
 #include <csignal>
 #include <cstring>
@@ -176,7 +177,18 @@ json Daemon::handle(const std::string& line) {
     if (words.empty()) return error("empty command");
 
     const auto& cmd = words[0];
-    if (cmd == "status") return status();
+    if (cmd == "status") {
+        auto out = status();
+        out.update(memory(false));
+        return out;
+    }
+    if (cmd == "mem") {
+        auto out = memory(true);
+        auto s = status();
+        out["ok"] = true;
+        for (auto key : {"model", "model_state", "ubatch", "batch"}) out[key] = s[key];
+        return out;
+    }
     if (cmd == "models" || cmd == "ls" || cmd == "list") {
         json list = json::array();
         for (auto& m : server_.models()) {
@@ -209,10 +221,15 @@ json Daemon::handle(const std::string& line) {
         return {{"ok", true}};
     }
     if (cmd == "batch") {
-        if (words.size() < 2 || words.size() > 3) return error("usage: batch <ubatch> [batch]");
+        bool force = words.size() > 2 && words.back() == "force";
+        if (force) words.pop_back();
+        if (words.size() < 2 || words.size() > 3) return error("usage: batch <ubatch> [batch] [force]");
         int ub = to_size(words[1]);
         int b = words.size() > 2 ? to_size(words[2]) : 0;
         if (ub < 1 || b < 0) return error("batch sizes must be 1-65536");
+        if (!force) {
+            if (auto err = check_fit(ub)) return error(*err);
+        }
         {
             std::lock_guard lock(mu_);
             if (b == 0) b = std::max(ub, batch_);
@@ -245,17 +262,80 @@ json Daemon::status() {
     };
 }
 
+json Daemon::memory(bool all) {
+    std::optional<std::string> model;
+    std::optional<Measured> current;
+    json known = json::object();
+    {
+        std::lock_guard lock(mu_);
+        if (model_ && model_state_ == "loaded") {
+            model = model_;
+            if (auto it = measured_.find(*model_); it != measured_.end()) current = it->second;
+        }
+        for (auto& [id, m] : measured_) {
+            auto j = m.footprint.to_json();
+            j["ubatch"] = m.ubatch;
+            j["batch"] = m.batch;
+            known[id] = j;
+        }
+    }
+
+    json out = {
+        {"memory", model && known.contains(*model) ? known[*model] : json(nullptr)},
+        {"kv_in_use", nullptr},
+        {"slots", nullptr},
+        {"system", system_memory().to_json()},
+    };
+    if (all) out["known"] = known;
+    if (!model) return out;
+
+    auto slots = server_.slots(*model);
+    out["slots"] = slots;
+    if (current && current->footprint.pool_tokens() > 0) {
+        long used = 0;
+        for (auto& s : slots) used += s.value("tokens", 0L);
+        long pool = current->footprint.pool_tokens();
+        double share = std::min(1.0, static_cast<double>(used) / pool);
+        out["kv_in_use"] = {
+            {"tokens", used},
+            {"capacity", pool},
+            {"mib", std::round(current->footprint.kv() * share * 100) / 100},
+        };
+    }
+    return out;
+}
+
+std::optional<std::string> Daemon::check_fit(int ubatch) {
+    std::lock_guard lock(mu_);
+    if (!model_ || (model_state_ != "loaded" && model_state_ != "loading")) return std::nullopt;
+    auto it = measured_.find(*model_);
+    if (it == measured_.end() || it->second.ubatch == ubatch || it->second.ubatch <= 0) return std::nullopt;
+
+    double now = it->second.footprint.compute();
+    double extra = now * ubatch / it->second.ubatch - now;
+    long available = system_memory().available_mib;
+    if (extra <= available - 1024) return std::nullopt;
+    return "ubatch " + std::to_string(ubatch) + " needs ~" + std::to_string(std::lround(extra)) +
+           " MiB more compute buffers, " + std::to_string(available) +
+           " MiB available; add force to apply anyway";
+}
+
 void Daemon::refresh() {
     bool healthy = server_.healthy();
     auto models = healthy ? server_.models() : json::array();
     auto found = active(models);
     bool busy = healthy && server_.busy(models);
+    auto footprint = server_.footprint();
 
     std::lock_guard lock(mu_);
     if (healthy && phase_ == "starting") phase_ = "running";
     model_ = found ? std::optional(found->id) : std::nullopt;
     model_state_ = found ? found->state : "unloaded";
     busy_ = busy;
+    if (found && found->state == "loaded" && footprint.complete && footprint.generation != generation_) {
+        measured_[found->id] = {footprint, ubatch_, batch_};
+        generation_ = footprint.generation;
+    }
 }
 
 void Daemon::start_server() {
