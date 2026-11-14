@@ -20,6 +20,7 @@ namespace {
 
 constexpr const char* usage =
     "usage: allam start [-c config]\n"
+    "       allam restart [-c config]\n"
     "       allam daemon [-c config]\n"
     "       allam status\n"
     "       allam ls | list | models\n"
@@ -95,6 +96,23 @@ int start_main(int argc, char** argv) {
     return 1;
 }
 
+int restart_main(int argc, char** argv) {
+    auto cfg = allam::load_config(config_arg(argc, argv));
+    auto socket = allam::default_socket_path();
+    if (!try_status(socket).empty()) {
+        allam::request(socket, "stop");
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(cfg.stop_timeout + 30);
+        while (std::filesystem::exists(socket)) {
+            if (std::chrono::steady_clock::now() > deadline) {
+                std::cerr << "allam: daemon did not stop\n";
+                return 1;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+    }
+    return start_main(argc, argv);
+}
+
 int client_main(int argc, char** argv) {
     std::string line;
     for (int i = 1; i < argc; ++i) line += (i > 1 ? " " : "") + std::string(argv[i]);
@@ -115,6 +133,7 @@ int main(int argc, char** argv) {
     }
     try {
         if (std::strcmp(argv[1], "start") == 0) return start_main(argc, argv);
+        if (std::strcmp(argv[1], "restart") == 0) return restart_main(argc, argv);
         if (std::strcmp(argv[1], "daemon") == 0) return daemon_main(argc, argv);
         return client_main(argc, argv);
     } catch (const std::invalid_argument& e) {

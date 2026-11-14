@@ -22,6 +22,7 @@ allam load <model>            # full name, unique part of it, or index
 allam unload [model]
 allam batch <ubatch> [batch]
 allam stop
+allam restart                 # stop, then start with a fresh config
 ```
 
 Socket: `$XDG_RUNTIME_DIR/allam.sock` (override with `ALLAM_SOCKET`).
